@@ -1,4 +1,4 @@
-# ML_basic_example
+# MLE_basics
 Welcome to the `ML_basic_example` project. It is an ideal template for starting a well-structured Machine Learning project. The goal of this project is to make the deployment of ML models straightforward, efficient, and maintainable. The project has been set up to handle each aspect of the ML pipeline from data processing, training models, and inferencing on new data. In order to use this project template, you'll first need to create a GitHub account if you don't have one already. It's a simple process that takes just a few minutes. Go to [GitHub's homepage](https://github.com), click 'Sign up', and follow the prompts to set up your new account. Get ready to step into the world of efficient Machine Learning project structuring!
 
 ## Prerequisites
