@@ -1,111 +1,151 @@
 """
-Script loads the latest trained model, data for inference and predicts results.
-Imports necessary packages and modules.
+This script performs inference using a trained neural network on the iris dataset.
 """
 
-import argparse
-import json
-import logging
 import os
-import pickle
 import sys
-from datetime import datetime
-from typing import List
-
+import logging
 import pandas as pd
-from sklearn.tree import DecisionTreeClassifier
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+import torch
+import torch.nn as nn
 
 # Adds the root directory to system path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(ROOT_DIR))
 
-# Change to CONF_FILE = "settings.json" if you have problems with env variables
-CONF_FILE = os.getenv('CONF_PATH')
+from utils import configure_logging
 
-from utils import get_project_dir, configure_logging
+# Configure logging
+configure_logging()
+logger = logging.getLogger(__name__)
 
-# Loads configuration settings from JSON
-with open(CONF_FILE, "r") as file:
-    conf = json.load(file)
+class IrisNet(nn.Module):
+    def __init__(self):
+        super(IrisNet, self).__init__()
+        """
+        Small neural net because of the small dataset
+        """
+        self.fc1 = nn.Linear(4, 8)  # Input layer of 4 features, hidden layer of 8 nodes
+        self.fc2 = nn.Linear(8, 16)  # Hidden layer of 16 nodes
+        self.fc3 = nn.Linear(16, 3)  # Output layer of 3 classes
 
-# Defines paths
-DATA_DIR = get_project_dir(conf['general']['data_dir'])
-MODEL_DIR = get_project_dir(conf['general']['models_dir'])
-RESULTS_DIR = get_project_dir(conf['general']['results_dir'])
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x
 
-# Initializes parser for command line arguments
-parser = argparse.ArgumentParser()
-parser.add_argument("--infer_file", 
-                    help="Specify inference data file", 
-                    default=conf['inference']['inp_table_name'])
-parser.add_argument("--out_path", 
-                    help="Specify the path to the output table")
-
-
-def get_latest_model_path() -> str:
-    """Gets the path of the latest saved model"""
-    latest = None
-    for (dirpath, dirnames, filenames) in os.walk(MODEL_DIR):
-        for filename in filenames:
-            if not latest or datetime.strptime(latest, conf['general']['datetime_format'] + '.pickle') < \
-                    datetime.strptime(filename, conf['general']['datetime_format'] + '.pickle'):
-                latest = filename
-    return os.path.join(MODEL_DIR, latest)
-
-
-def get_model_by_path(path: str) -> DecisionTreeClassifier:
-    """Loads and returns the specified model"""
+def load_model(model_path):
+    """
+    Load the trained model from the specified path.
+    """
     try:
-        with open(path, 'rb') as f:
-            model = pickle.load(f)
-            logging.info(f'Path of the model: {path}')
-            return model
+        logger.info("Loading model...")
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found at {model_path}. Please train the model first.")
+        
+        model = IrisNet()
+        model.load_state_dict(torch.load(model_path))
+        model.eval()  # Set the model to evaluation mode
+        logger.info("Model loaded successfully.")
+        return model
     except Exception as e:
-        logging.error(f'An error occurred while loading the model: {e}')
-        sys.exit(1)
+        logger.error(f"Error loading model: {e}")
+        raise
 
-
-def get_inference_data(path: str) -> pd.DataFrame:
-    """loads and returns data for inference from the specified csv file"""
+def preprocess_data(data_path):
+    """
+    Load and preprocess the inference dataset.
+    """
     try:
-        df = pd.read_csv(path)
-        return df
+        logger.info("Loading inference dataset...")
+        if not os.path.exists(data_path):
+            raise FileNotFoundError(f"Inference dataset not found at {data_path}.")
+        
+        df = pd.read_csv(data_path)
+        logger.info(f"Inference dataset loaded. Size: {len(df)} samples.")
+
+        # Check if the dataset has the required features
+        required_features = ['sepal length (cm)', 'sepal width (cm)', 'petal length (cm)', 'petal width (cm)']
+        if not all(feature in df.columns for feature in required_features):
+            raise ValueError(f"Inference dataset must contain the following features: {required_features}")
+
+        # Handle case where target column is missing
+        X = df.drop('target', axis=1) if 'target' in df.columns else df
+
+        logger.info("Scaling features...")
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        # Convert to PyTorch tensor
+        X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
+        return X_tensor, df
     except Exception as e:
-        logging.error(f"An error occurred while loading inference data: {e}")
-        sys.exit(1)
+        logger.error(f"Error preprocessing data: {e}")
+        raise
 
+def make_predictions(model, X):
+    """
+    Make predictions using the trained model.
+    """
+    try:
+        logger.info("Making predictions...")
+        with torch.no_grad():
+            outputs = model(X)
+            _, predicted = torch.max(outputs.data, 1)
+        return predicted.numpy()
+    except Exception as e:
+        logger.error(f"Error making predictions: {e}")
+        raise
 
-def predict_results(model: DecisionTreeClassifier, infer_data: pd.DataFrame) -> pd.DataFrame:
-    """Predict de results and join it with the infer_data"""
-    results = model.predict(infer_data)
-    infer_data['results'] = results
-    return infer_data
-
-
-def store_results(results: pd.DataFrame, path: str = None) -> None:
-    """Store the prediction results in 'results' directory with current datetime as a filename"""
-    if not path:
-        if not os.path.exists(RESULTS_DIR):
-            os.makedirs(RESULTS_DIR)
-        path = datetime.now().strftime(conf['general']['datetime_format']) + '.csv'
-        path = os.path.join(RESULTS_DIR, path)
-    pd.DataFrame(results).to_csv(path, index=False)
-    logging.info(f'Results saved to {path}')
-
+def save_results(df, predictions, output_path):
+    """
+    Save the predictions to a CSV file.
+    """
+    try:
+        logger.info("Saving results...")
+        df['predicted_target'] = predictions
+        df.to_csv(output_path, index=False)
+        logger.info(f"Results saved to {output_path}.")
+    except Exception as e:
+        logger.error(f"Error saving results: {e}")
+        raise
 
 def main():
-    """Main function"""
-    configure_logging()
-    args = parser.parse_args()
+    try:
+        # Paths
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        model_path = os.path.join(parent_dir, 'models', 'model.pth')
+        inference_data_path = os.path.join(parent_dir, 'data', 'inference.csv')
+        output_path = os.path.join(parent_dir, 'results', 'predictions.csv')
 
-    model = get_model_by_path(get_latest_model_path())
-    infer_file = args.infer_file
-    infer_data = get_inference_data(os.path.join(DATA_DIR, infer_file))
-    results = predict_results(model, infer_data)
-    store_results(results, args.out_path)
+        # Ensure the results directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    logging.info(f'Prediction results: {results}')
+        # Load the model
+        model = load_model(model_path)
 
+        # Preprocess the inference data
+        X, df = preprocess_data(inference_data_path)
+
+        # Make predictions
+        predictions = make_predictions(model, X)
+
+        # Save the results
+        save_results(df, predictions, output_path)
+
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {e}")
+        sys.exit(1)
+    except ValueError as e:
+        logger.error(f"Invalid data: {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"An unexpected error occurred: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
