@@ -2,46 +2,49 @@ import unittest
 import pandas as pd
 import os
 import sys
-import json
 
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.dirname(ROOT_DIR))
-CONF_FILE = os.getenv('CONF_PATH')
+# Add the data_process directory to the Python path
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data_process'))
 
-from training.train import DataProcessor, Training 
+from data_processing import load_data, split_dataframe, save_dataframe, main
 
 
-class TestDataProcessor(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        with open(CONF_FILE, "r") as file:
-            conf = json.load(file)
-        cls.data_dir = conf['general']['data_dir']
-        cls.train_path = os.path.join(cls.data_dir, conf['train']['table_name'])
+class TestDataDimensions(unittest.TestCase):
 
-    def test_data_extraction(self):
-        dp = DataProcessor()
-        df = dp.data_extraction(self.train_path)
-        self.assertIsInstance(df, pd.DataFrame)
+    def setUp(self):
+        # Define the root directory (MLE_basics)
+        self.root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    def test_prepare_data(self):
-        dp = DataProcessor()
-        df = dp.prepare_data(100)
-        self.assertEqual(df.shape[0], 100)
+        # Define file paths for train.csv and inference.csv
+        self.data_dir = os.path.join(self.root_dir, 'data')
+        self.train_file_path = os.path.join(self.data_dir, 'train.csv')
+        self.inference_file_path = os.path.join(self.data_dir, 'inference.csv')
+
+        # Ensure the data directory exists
+        os.makedirs(self.data_dir, exist_ok=True)
+
+        # Load the data and split it
+        self.df = load_data()
+        self.train_df, self.inference_df = split_dataframe(self.df)
+
+        # Save the dataframes to CSV
+        save_dataframe(self.train_df, self.train_file_path)
+        save_dataframe(self.inference_df, self.inference_file_path)
+
+    def test_train_csv_dimensions(self):
+        # Load the train.csv file
+        train_df = pd.read_csv(self.train_file_path)
+        
+        # Check the dimensions
+        self.assertEqual(train_df.shape, (120, 5), "train.csv should have dimensions (120, 5)")
+
+    def test_inference_csv_dimensions(self):
+        # Load the inference.csv file
+        inference_df = pd.read_csv(self.inference_file_path)
+        
+        # Check the dimensions
+        self.assertEqual(inference_df.shape, (30, 4), "inference.csv should have dimensions (30, 4)")
 
 
-class TestTraining(unittest.TestCase):
-    def test_train(self):
-        tr = Training()
-        # assume you have some prepared data
-        X_train = pd.DataFrame({
-            'x1': [1, 0, 1, 0],
-            'x2': [1, 1, 0, 0]
-        })
-        y_train = pd.Series([0, 1, 1, 0])
-        tr.train(X_train, y_train)
-        self.assertIsNotNone(tr.model.tree_)
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
